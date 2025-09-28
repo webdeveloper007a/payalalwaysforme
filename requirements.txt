@@ -1,0 +1,11 @@
+requests
+user_agent
+pyfiglet
+colorama
+beautifulsoup4
+requests_toolbelt
+Flask
+requests
+requests-toolbelt
+user-agent
+gunicorn
