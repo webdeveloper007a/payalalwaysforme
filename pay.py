@@ -60,7 +60,7 @@ def check_card(card_details):
             'https://switchupcb.com/shop/i-buy/',
             headers={'user-agent': user, 'content-type': multipart_data.content_type},
             data=multipart_data,
-            timeout=15
+            timeout=50
         )
 
         # 2. Get checkout tokens
@@ -85,7 +85,7 @@ def check_card(card_details):
                 'https://switchupcb.com/?wc-ajax=ppc-create-order',
                 json=json_data_create,
                 headers={'user-agent': user},
-                timeout=15
+                timeout=50
             )
             order_data = response_create.json()
         except Exception:
@@ -109,7 +109,7 @@ def check_card(card_details):
                 'https://www.paypal.com/graphql?fetch_credit_form_submit',
                 headers={'user-agent': user, 'content-type': 'application/json'},
                 json=json_data_graphql,
-                timeout=15
+                timeout=50
             )
             raw_json = response_final.json()
         except Exception:
