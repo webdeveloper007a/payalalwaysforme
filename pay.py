@@ -125,7 +125,7 @@ def check_card(card_details):
 
         # Check if 3DS required
         if "is3DSecureRequired" in response_final.text:
-            return {"message": "3DS_REQUIRED", "response_text": "3DSecure step required"}
+            return {"message": "✅APPROVED", "response_text": "3DS_REQUIRED"}
 
         # Extract error code
         error_text = "ERROR: UNKNOWN"
