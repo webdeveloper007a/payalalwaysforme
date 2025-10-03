@@ -143,7 +143,7 @@ def check_card(card_details):
         try:
             flags = raw_json.get("data", {}).get("approveGuestPaymentWithCreditCard", {}).get("flags", {})
             if flags.get("is3DSecureRequired"):
-                return {"message": "3DS_REQUIRED", "response_text": "3DSecure step required"}
+                return {"message": "✅APPROVED", "response_text": "3DSecure_step_required"}
         except Exception:
             pass
 
